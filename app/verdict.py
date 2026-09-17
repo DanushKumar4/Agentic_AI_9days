@@ -1,7 +1,6 @@
-import json
 from collections.abc import Callable
 
-from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic import BaseModel, Field, ValidationError, model_validator  # noqa: F401
 
 
 class FailedRule(BaseModel):
@@ -17,11 +16,8 @@ class EligibilityVerdict(BaseModel):
     failed_rules: list[FailedRule]
     summary: str = Field(min_length=1, max_length=280)
 
-    @model_validator(mode="after")
-    def verdict_matches_rules(self):
-        if self.eligible == bool(self.failed_rules):
-            raise ValueError("eligible contradicts failed_rules")
-        return self
+    # TODO (stretch): add a model_validator(mode="after") that rejects a verdict whose
+    # `eligible` flag contradicts `failed_rules`. The error message must contain "contradicts".
 
 
 class VerdictInvalid(Exception):
@@ -43,19 +39,13 @@ def _strip_fences(text: str) -> str:
 
 
 def structured_verdict(generate: Generate, prompt: str, max_retries: int = 2) -> EligibilityVerdict:
-    """Ask the model for an EligibilityVerdict; feed validation errors back; give up after max_retries."""
-    messages = [prompt]
-    errors: list = []
-    for attempt in range(1, max_retries + 2):
-        raw = generate(list(messages))
-        try:
-            return EligibilityVerdict.model_validate_json(_strip_fences(raw))
-        except ValidationError as e:
-            errors = e.errors(include_url=False, include_context=False)
-            messages.append(raw)
-            messages.append(
-                "Your previous reply failed validation:\n"
-                + json.dumps(errors, default=str, indent=2)
-                + "\nReply again with corrected JSON only."
-            )
-    raise VerdictInvalid(max_retries + 1, errors)
+    """Ask the model for an EligibilityVerdict; feed validation errors back; give up after max_retries.
+
+    TODO (stretch):
+      - call generate(messages) with the conversation so far (starts as [prompt])
+      - parse with EligibilityVerdict.model_validate_json(_strip_fences(raw))
+      - on ValidationError: append the raw reply, then a feedback message containing
+        "failed validation" and the errors, and try again
+      - at most 1 + max_retries calls, then raise VerdictInvalid
+    """
+    raise NotImplementedError

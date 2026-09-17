@@ -28,9 +28,13 @@ def _unknown_drive(drive_id: int) -> dict:
 
 
 class PlacementTools:
-    """Every method named in TOOL_NAMES is exposed to the model. Its docstring IS the prompt."""
+    """Every method named in TOOL_NAMES is exposed to the model. Its docstring IS the prompt.
 
-    READ_ONLY = ("list_open_drives", "get_student", "check_eligibility", "list_my_applications")
+    Two tools are complete samples: check_eligibility (read-only) and apply_to_drive (side effect).
+    Copy their patterns for the tools marked TODO.
+    """
+
+    READ_ONLY = ("list_open_drives", "get_student", "check_eligibility")
     SIDE_EFFECTS = ("apply_to_drive", "book_interview_slot", "notify_student")
     TOOL_NAMES = READ_ONLY + SIDE_EFFECTS
 
@@ -45,56 +49,10 @@ class PlacementTools:
     def call(self, name: str, args: dict) -> dict:
         return dispatch(self.functions(), name, args)
 
-    # ------------------------------------------------------------------ read-only
-
-    def list_open_drives(self, branch: str | None = None, grad_year: int | None = None) -> dict:
-        """List placement drives that are accepting applications right now, soonest deadline first.
-
-        Use when the user asks which companies are coming, what drives are open, or what they
-        could apply to. Do NOT use to decide whether a specific student is eligible for a
-        specific drive; use check_eligibility for that. Read-only: changes nothing.
-
-        Args:
-            branch: Optional. Branch code such as "CSE", "IT", "ECE" or "MECH". Drives whose
-                branch rule excludes this branch are left out.
-            grad_year: Optional. Four-digit graduation year, e.g. 2026. Drives restricted to a
-                different year are left out.
-
-        Returns:
-            {"drives": [{"drive_id", "company", "role", "ctc_lpa", "deadline"}]}. Use drive_id
-            with check_eligibility and apply_to_drive.
-        """
-        filters = {"branch": branch, "grad_year": grad_year}
-        drives = []
-        for d in self.repo.list_open_drives(self.clock()):
-            rules = self.repo.rules_for_drive(d.id)
-            if any(r.field in filters and filters[r.field] is not None
-                   and not _passes(r, filters[r.field]) for r in rules):
-                continue
-            drives.append({"drive_id": d.id, "company": d.company, "role": d.role,
-                           "ctc_lpa": d.ctc_lpa, "deadline": d.deadline.date().isoformat()})
-        return {"drives": drives}
-
-    def get_student(self, student_id: str) -> dict:
-        """Fetch the placement record for one student: name, branch, CGPA, backlogs, graduation year.
-
-        Use when the user asks what is on record for them ("what's my CGPA", "how many backlogs
-        do I have"). Do NOT use to check eligibility; check_eligibility reads the record itself.
-        Read-only: changes nothing.
-
-        Args:
-            student_id: Roll number, two digits, two capital letters, three digits, e.g. "22CS045".
-
-        Returns:
-            {"student_id", "name", "branch", "cgpa", "backlogs", "grad_year"}
-        """
-        s = self.repo.get_student(student_id)
-        if s is None:
-            return _unknown_student(student_id)
-        return {"student_id": s.roll_no, "name": s.name, "branch": s.branch,
-                "cgpa": s.cgpa, "backlogs": s.backlogs, "grad_year": s.grad_year}
+    # ================================================================== SAMPLE 1 (given): read-only
 
     def _evaluate(self, s: Student, drive_id: int) -> list[dict]:
+        # The business rule lives in data (placement.eligibility_rule), not in the prompt or an if.
         failed = []
         for rule in self.repo.rules_for_drive(drive_id):
             actual = getattr(s, rule.field)
@@ -117,16 +75,18 @@ class PlacementTools:
             {"student_id", "drive_id", "eligible", "failed_rules": [{"rule_id", "rule", "actual"}]}.
             Explain every failed rule to the user; do not invent rules that are not listed.
         """
+        # Failures are returned, never raised: a stable code plus a hint telling the model what to do next.
         s = self.repo.get_student(student_id)
         if s is None:
             return _unknown_student(student_id)
         if self.repo.get_drive(drive_id) is None:
             return _unknown_drive(drive_id)
+        # Every failed rule, not just the first: the model explains the verdict, it never decides it.
         failed = self._evaluate(s, drive_id)
         return {"student_id": s.roll_no, "drive_id": drive_id,
                 "eligible": not failed, "failed_rules": failed}
 
-    # ------------------------------------------------------------------ side effects
+    # ================================================================== SAMPLE 2 (given): side effect
 
     def apply_to_drive(self, student_id: str, drive_id: int) -> dict:
         """Submit a placement application for ONE student to ONE drive.
@@ -145,6 +105,7 @@ class PlacementTools:
              "available_slots": [{"slot_id", "starts_at"}]}. Offer the slots to the user;
             book one only when they choose.
         """
+        # Side effects check in a fixed order and stop at the first failure.
         s = self.repo.get_student(student_id)
         if s is None:
             return _unknown_student(student_id)
@@ -154,6 +115,8 @@ class PlacementTools:
         if d.status != "open" or d.deadline <= self.clock():
             return {"error": "drive_closed",
                     "hint": f"{d.company} is not accepting applications. Call list_open_drives for open ones."}
+        # Re-check even though the description says "call check_eligibility first".
+        # An instruction asks; code enforces. The model may have skipped it.
         failed = self._evaluate(s, drive_id)
         if failed:
             return {"error": "not_eligible", "failed_rules": failed,
@@ -163,90 +126,48 @@ class PlacementTools:
         except AlreadyApplied:
             return {"error": "already_applied",
                     "hint": "The student has already applied to this drive. Tell the user; do not retry."}
+        # Return what the next step needs: the model will want to offer interview slots.
         slots = self.repo.free_slots(drive_id)
         return {"application_id": application_id, "student_id": s.roll_no, "drive_id": drive_id,
                 "status": "applied",
                 "available_slots": [{"slot_id": sl.id, "starts_at": sl.starts_at.isoformat()} for sl in slots]}
 
+    # ================================================================== YOUR TOOLS
+
+    # TODO 1 — get_student (5 min)
+    # Returns {"student_id", "name", "branch", "cgpa", "backlogs", "grad_year"}.
+    # student_id in the result is the roll number. Error: unknown_student.
+    def get_student(self, student_id: str) -> dict:
+        """TODO: write the description. Follow the samples: when to use it, when not to, Args, Returns."""
+        raise NotImplementedError
+
+    # TODO 2 — list_open_drives (10 min)
+    # Returns {"drives": [{"drive_id", "company", "role", "ctc_lpa", "deadline"}]}, deadline as YYYY-MM-DD.
+    # Only drives with status "open" and a deadline after self.clock(), soonest deadline first
+    # (repo.list_open_drives already does that). If branch is given, leave out drives whose
+    # "branch" rule that branch fails; same for grad_year. Ignore rules on other fields.
+    def list_open_drives(self, branch: str | None = None, grad_year: int | None = None) -> dict:
+        """TODO: write the description."""
+        raise NotImplementedError
+
+    # TODO 3 — book_interview_slot (15 min)
+    # Check in this order, stop at the first failure:
+    #   unknown_student -> unknown_slot -> no_application (student has not applied to the slot's drive)
+    #   -> slot_taken (repo.claim_slot returned False; include the drive's remaining "available_slots")
+    # Returns {"slot_id", "drive_id", "starts_at", "status": "booked"}, starts_at as ISO-8601.
     def book_interview_slot(self, student_id: str, slot_id: int) -> dict:
-        """Book one interview slot for a student who has already applied to that slot's drive.
+        """TODO: write the description. Copy the side-effect wording pattern from apply_to_drive."""
+        raise NotImplementedError
 
-        Side effect: reserves the slot so no other student can take it. Call it only after the
-        user has picked a specific slot. Slot ids come from the available_slots returned by
-        apply_to_drive.
-
-        Args:
-            student_id: Roll number, e.g. "22CS045".
-            slot_id: Integer slot id from available_slots.
-
-        Returns:
-            {"slot_id", "drive_id", "starts_at", "status": "booked"}. If the slot was taken,
-            the error lists other free slots; ask the user to choose again.
-        """
-        s = self.repo.get_student(student_id)
-        if s is None:
-            return _unknown_student(student_id)
-        slot = self.repo.get_slot(slot_id)
-        if slot is None:
-            return {"error": "unknown_slot",
-                    "hint": "Use a slot_id from available_slots returned by apply_to_drive."}
-        if not self.repo.has_application(s.id, slot.drive_id):
-            return {"error": "no_application",
-                    "hint": f"The student must apply to drive {slot.drive_id} before booking a slot."}
-        if not self.repo.claim_slot(slot_id, s.id):
-            others = self.repo.free_slots(slot.drive_id)
-            return {"error": "slot_taken",
-                    "available_slots": [{"slot_id": o.id, "starts_at": o.starts_at.isoformat()} for o in others],
-                    "hint": "Another student booked this slot. Ask the user to pick one of available_slots."}
-        return {"slot_id": slot.id, "drive_id": slot.drive_id,
-                "starts_at": slot.starts_at.isoformat(), "status": "booked"}
-
+    # TODO 4 (lab 1) — notify_student
+    # unknown_student; message empty or over 160 characters -> invalid_message;
+    # otherwise notification_id = self.notifier.send(student_id, message)
+    # Returns {"notification_id", "status": "queued"}.
     def notify_student(self, student_id: str, message: str) -> dict:
-        """Send a short reminder or notice to a student by SMS and email.
+        """TODO (lab 1): a description that fires on exactly one of your four prompts."""
+        raise NotImplementedError
 
-        Side effect: a real message reaches the student's phone. Use ONLY when the user
-        explicitly asks to be reminded, notified or messaged ("remind me", "text me", "send me
-        a reminder"). Do NOT use to answer a question, even about deadlines or results; answer
-        in the reply instead.
-
-        Args:
-            student_id: Roll number, e.g. "22CS045".
-            message: The notice itself, plain text, at most 160 characters.
-
-        Returns:
-            {"notification_id", "status": "queued"}
-        """
-        if self.repo.get_student(student_id) is None:
-            return _unknown_student(student_id)
-        if not message.strip() or len(message) > 160:
-            return {"error": "invalid_message", "hint": "message must be 1 to 160 characters."}
-        notification_id = self.notifier.send(student_id, message)
-        return {"notification_id": notification_id, "status": "queued"}
-
-    # ------------------------------------------------------------------ stretch: a tool of your own
-
-    def list_my_applications(self, student_id: str) -> dict:
-        """List the placement applications one student has already submitted, oldest first,
-        with the interview slot they booked for each, if any.
-
-        Use when the user asks "where have I applied", "did my application go through" or
-        "when is my interview". Do NOT use to find new drives; use list_open_drives.
-        Read-only: changes nothing.
-
-        Args:
-            student_id: Roll number, e.g. "22CS045".
-
-        Returns:
-            {"applications": [{"application_id", "drive_id", "company", "role", "status",
-            "applied_on", "interview_at"}]}. interview_at is null until a slot is booked; offer
-            book_interview_slot in that case.
-        """
-        s = self.repo.get_student(student_id)
-        if s is None:
-            return _unknown_student(student_id)
-        return {"applications": [
-            {"application_id": a["application_id"], "drive_id": a["drive_id"], "company": a["company"],
-             "role": a["role"], "status": a["status"], "applied_on": a["created_at"].date().isoformat(),
-             "interview_at": a["interview_at"].isoformat() if a["interview_at"] else None}
-            for a in self.repo.list_applications(s.id)
-        ]}
+    # STRETCH — design a tool of your own: list_my_applications(student_id)
+    # "Where have I applied? When is my interview?" Add it to READ_ONLY, write the description,
+    # and use repo.list_applications(student.id), which is already given.
+    # tests/test_stretch_my_applications.py switches on as soon as the method exists.

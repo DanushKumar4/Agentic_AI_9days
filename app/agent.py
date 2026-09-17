@@ -1,8 +1,8 @@
-import time
+import time  # noqa: F401  (you will time each tool call)
 from collections.abc import Callable
 
 from app.memory import ConversationStore
-from app.providers import AgentError
+from app.providers import AgentError  # noqa: F401
 from app.tools.placement_tools import PlacementTools
 
 MAX_STEPS = 8
@@ -27,73 +27,46 @@ class Agent:
         self.on_step = on_step
         self.contents: list[dict] = []     # what the model sees, turn after turn
         self.trace: list[dict] = []        # what happened, step by step
-        # Part 3.3: start from the saved conversation.
-        if memory is not None and thread_id is not None:
-            self.contents = [{"role": m["role"], "text": m["text"]} for m in memory.load_history(thread_id)]
-
-    # ------------------------------------------------------------------ Part 2.1
-
-    def run_tool(self, name: str, args: dict) -> dict:
-        """Call one tool. Never raises: every failure becomes a result the model can read."""
-        try:
-            return self.tools.call(name, args)
-        except NotImplementedError:
-            return {"error": "not_implemented", "hint": f"{name} is not available yet. Tell the user."}
-        except Exception as e:                                   # self-healing: a crash becomes information
-            return {"error": "tool_failed", "hint": f"{name} failed ({type(e).__name__}). Try another way or tell the user."}
+        # TODO (Part 3.3): if memory and thread_id are given, start self.contents from
+        # memory.load_history(thread_id), as {"role": ..., "text": ...} entries.
 
     def _log(self, entry: dict) -> None:
+        """Add one entry to the trace and tell on_step about it. (Given.)"""
         self.trace.append(entry)
         if self.on_step:
             self.on_step(entry)
 
+    # ------------------------------------------------------------------ Part 2.1
+
+    def run_tool(self, name: str, args: dict) -> dict:
+        """Call one tool with self.tools.call(name, args). Never raise.
+
+        TODO (Part 2.1):
+          - NotImplementedError -> {"error": "not_implemented", "hint": ...}
+          - any other exception  -> {"error": "tool_failed", "hint": ...}
+        A crash becomes information the model can act on: that is self-healing.
+        """
+        raise NotImplementedError
+
     # ------------------------------------------------------------------ Part 2.2
 
     def ask(self, text: str) -> str:
-        """One user turn: loop model calls and tool calls until the model answers."""
-        self.contents.append({"role": "user", "text": text})
-        run_id = None
-        if self.memory:                                                     # Part 3.3
-            self.memory.append_message(self.thread_id, "user", text)
-            run_id = self.memory.start_run(self.thread_id, self.provider.model)
-        try:
-            reply = self._loop(run_id)
-        except AgentError as e:
-            if self.memory:                                                 # Part 3.3
-                self.memory.finish_run(run_id, "failed", e.code)
-            raise
-        if self.memory:                                                     # Part 3.3
-            self.memory.append_message(self.thread_id, "model", reply)
-            self.memory.finish_run(run_id, "succeeded")
-        return reply
+        """One user turn: loop model calls and tool calls until the model answers.
 
-    def _loop(self, run_id: str | None) -> str:
-        functions = list(self.tools.functions().values())
-        seq = 0
-        while seq < MAX_STEPS:
-            turn = self.provider.generate(self.system, self.contents, functions)
-            seq += 1
-            self._log({"step": seq, "kind": "model", "tokens_in": turn.tokens_in, "tokens_out": turn.tokens_out})
-            if self.memory:                                                 # Part 3.3
-                self.memory.record_model_step(run_id, seq, turn.tokens_in, turn.tokens_out)
+        TODO (Part 2.2):
+          1. Append {"role": "user", "text": text} to self.contents.
+          2. Call self.provider.generate(self.system, self.contents, list(self.tools.functions().values())).
+             Log {"step", "kind": "model", "tokens_in", "tokens_out"}.
+          3. No tool calls? Append {"role": "model", "text": reply, "raw": turn.raw} and return the reply.
+          4. Otherwise append {"role": "model", "text": turn.text, "raw": turn.raw,
+             "tool_calls": [{"name", "args"}, ...]}, then for EACH call, in order:
+             run_tool, log {"step", "kind": "tool", "tool", "args", "result", "ok", "ms"}
+             (ok means "error" not in result), and append {"role": "tool", "name", "result"}.
+          5. Go back to 2. Steps are numbered 1, 2, 3... across model and tool steps.
+          6. After MAX_STEPS steps without an answer, raise AgentError("step_limit", ...).
 
-            if not turn.tool_calls:
-                reply = turn.text or ""
-                self.contents.append({"role": "model", "text": reply, "raw": turn.raw})
-                return reply
-
-            self.contents.append({"role": "model", "text": turn.text, "raw": turn.raw,
-                                  "tool_calls": [{"name": c.name, "args": c.args} for c in turn.tool_calls]})
-            for call in turn.tool_calls:
-                seq += 1
-                started = time.perf_counter()
-                result = self.run_tool(call.name, call.args)
-                ms = round((time.perf_counter() - started) * 1000)
-                ok = "error" not in result
-                self._log({"step": seq, "kind": "tool", "tool": call.name, "args": call.args,
-                           "result": result, "ok": ok, "ms": ms})
-                if self.memory:                                             # Part 3.3
-                    self.memory.record_tool_call(run_id, seq, call.name, call.args, result, ok, ms)
-                self.contents.append({"role": "tool", "name": call.name, "result": result})
-
-        raise AgentError("step_limit", f"Stopped after {MAX_STEPS} steps without an answer.")
+        TODO (Part 3.3), when self.memory is set: save the user message and start a run before
+        the loop; record every model step and tool call as it happens; save the reply and finish
+        the run as succeeded; on AgentError, finish the run as failed with e.code and re-raise.
+        """
+        raise NotImplementedError

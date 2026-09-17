@@ -1,21 +1,31 @@
-# Placement Assistant: Day 2 answer kit (instructor only)
+# Placement Assistant: Day 2 programming kit
 
-Do not share this folder with students. It is the complete reference for the student kit.
+SoDak EduTech, Agentic AI Track, Day 2. Open `HANDOUT.html` in a browser for the full exercise sheet.
 
-| Path | What it is |
-|---|---|
-| `INSTRUCTOR.md` | Timings, what to live-code, common mistakes, catch-up procedure |
-| `catchup/` | Checkpoints to hand a stuck student at the end of Part 1, 2 or 3. No lab answers inside. |
-| `app/tools/placement_tools.py` | Part 1, lab 1 (`notify_student`) and stretch (`list_my_applications`) |
-| `app/agent.py` | Part 2 and Part 3.3 |
-| `schema/agent.sql`, `app/memory.py` | Part 3.1 and 3.2; `page_messages` is lab 3 |
-| `schema/append_only.sql` | Lab 2 |
-| `app/verdict.py` | Stretch |
-| `docs/part3_design.md` | Written answer key |
+You need Python 3.10+ and a Gemini API key. No database server: the placement data lives in memory
+and the agent's memory uses SQLite, which comes with Python.
+
+## What you build
+
+| Part | You write | Where |
+|---|---|---|
+| 1 Tools | `get_student`, `list_open_drives`, `book_interview_slot` (two sample tools are given) | `app/tools/placement_tools.py` |
+| 2 A small agent | `run_tool` and the loop in `ask` | `app/agent.py` |
+| 3 Memory | the schema, the SQL, and wiring memory into the agent | `schema/agent.sql`, `app/memory.py`, `app/agent.py` |
+| Lab | `notify_student`, append-only history, paging through history | see the handout |
+
+## Start
 
 ```bash
+python -m venv .venv
+source .venv/bin/activate                # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-pytest            # 89 passed
+export GEMINI_API_KEY=your-key           # Windows: set GEMINI_API_KEY=your-key
+
+pytest tests/test_part1_tools.py         # the sample tools pass already
+python -m scripts.chat --mock            # after Part 2: talk to your agent, no quota
+python -m scripts.chat                   # the same agent on real Gemini
+python -m scripts.chat --db agent.db     # after Part 3: it remembers
 ```
 
-`docs/lab1_ab.md` is left blank: A/B results depend on the model and must be produced live.
+Tests never call Gemini, so they never use your quota.

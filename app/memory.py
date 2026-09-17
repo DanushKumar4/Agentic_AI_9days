@@ -1,4 +1,4 @@
-import json
+import json  # noqa: F401
 import sqlite3
 import uuid
 from contextlib import contextmanager
@@ -54,62 +54,38 @@ class ConversationStore:
                 WHERE s.run_id = ? ORDER BY s.seq""", (run_id,)).fetchall()
         return {**dict(run), "steps": [dict(s) for s in steps]}
 
-    # ------------------------------------------------------------------ Part 3.2
+    # ------------------------------------------------------------------ Part 3.2: your SQL
 
     def append_message(self, thread_id: str, role: str, text: str) -> int:
-        # seq is computed inside the INSERT; UNIQUE (thread_id, seq) catches a concurrent writer.
-        cur = self.conn.execute(
-            """INSERT INTO message (thread_id, seq, role, text)
-               VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM message WHERE thread_id = ?), ?, ?)""",
-            (thread_id, thread_id, role, text))
-        return self.conn.execute("SELECT seq FROM message WHERE id = ?", (cur.lastrowid,)).fetchone()["seq"]
+        """TODO: insert with seq = this thread's highest seq + 1 (computed in the same INSERT). Return the seq."""
+        raise NotImplementedError
 
     def load_history(self, thread_id: str) -> list[dict]:
-        rows = self.conn.execute(
-            "SELECT seq, role, text FROM message WHERE thread_id = ? ORDER BY seq", (thread_id,)).fetchall()
-        return [dict(r) for r in rows]
+        """TODO: [{"seq", "role", "text"}, ...] in seq order."""
+        raise NotImplementedError
 
     def start_run(self, thread_id: str, model: str) -> str:
-        run_id = str(uuid.uuid4())
-        self.conn.execute("INSERT INTO run (id, thread_id, status, model) VALUES (?, ?, 'running', ?)",
-                          (run_id, thread_id, model))
-        return run_id
+        """TODO: new run with a uuid4 id and status 'running'. Return the id."""
+        raise NotImplementedError
 
     def record_model_step(self, run_id: str, seq: int, tokens_in: int, tokens_out: int) -> int:
-        with self.transaction() as conn:
-            step_id = conn.execute(
-                "INSERT INTO run_step (run_id, seq, kind, tokens_in, tokens_out) VALUES (?, ?, 'model', ?, ?)",
-                (run_id, seq, tokens_in, tokens_out)).lastrowid
-            conn.execute("UPDATE run SET tokens_in = tokens_in + ?, tokens_out = tokens_out + ? WHERE id = ?",
-                         (tokens_in, tokens_out, run_id))
-            return step_id
+        """TODO: insert a 'model' run_step AND add its tokens to the run, in ONE transaction. Return the step id."""
+        raise NotImplementedError
 
     def record_tool_call(self, run_id: str, seq: int, name: str, args: dict, result: dict,
                          ok: bool, latency_ms: int) -> int:
-        with self.transaction() as conn:
-            step_id = conn.execute(
-                "INSERT INTO run_step (run_id, seq, kind) VALUES (?, ?, 'tool')", (run_id, seq)).lastrowid
-            conn.execute(
-                """INSERT INTO tool_call (run_step_id, tool_name, args, result, ok, latency_ms)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (step_id, name, json.dumps(args, default=str), json.dumps(result, default=str),
-                 int(ok), latency_ms))
-            return step_id
+        """TODO: insert a 'tool' run_step and its tool_call (args and result as JSON) in ONE transaction.
+        Return the step id. Use `with self.transaction() as conn:`."""
+        raise NotImplementedError
 
     def finish_run(self, run_id: str, status: str, error_code: str | None = None) -> None:
-        self.conn.execute(
-            "UPDATE run SET status = ?, error_code = ?, finished_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
-            " WHERE id = ?", (status, error_code, run_id))
+        """TODO: set status, error_code and finished_at."""
+        raise NotImplementedError
 
     # ------------------------------------------------------------------ Lab 3
 
     def page_messages(self, thread_id: str, after_seq: int = 0, limit: int = 20) -> tuple[list[dict], int | None]:
-        if limit < 1:
-            raise ValueError("limit must be at least 1")
-        rows = self.conn.execute(
-            """SELECT seq, role, text, created_at FROM message
-                WHERE thread_id = ? AND seq > ? ORDER BY seq LIMIT ?""",
-            (thread_id, after_seq, limit + 1)).fetchall()
-        page = [dict(r) for r in rows[:limit]]
-        next_after = page[-1]["seq"] if len(rows) > limit else None
-        return page, next_after
+        """TODO (lab 3): up to `limit` messages with seq > after_seq, as {"seq", "role", "text", "created_at"}.
+        Also return the after_seq for the next page, or None if this is the last page.
+        No OFFSET. limit below 1 raises ValueError."""
+        raise NotImplementedError
